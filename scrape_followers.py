@@ -5,10 +5,12 @@ import logging
 from dotenv import load_dotenv
 from rocketapi import InstagramAPI, ThreadsAPI
 from decorators import retry_on_exception
-
+import time
 
 logging.basicConfig(level=logging.INFO)
+
 load_dotenv()
+
 token = os.getenv('ROCKETAPI_TOKEN')
 
 ig_api = InstagramAPI(token)
@@ -31,11 +33,15 @@ def get_user_id(input_value):
 
 @retry_on_exception(max_tries=3)
 def get_followers(user_id, max_id=None):
-    return threads_api.get_user_followers(user_id, max_id)
-
+    followers = threads_api.get_user_followers(user_id, max_id)
+    print(followers)
+    return followers
 
 def scrape_followers(input_value):
     user_id = get_user_id(input_value)
+    print(user_id)
+   
+
     if not user_id:
         logging.error(f"Failed to get user_id for {input_value}")
         return
