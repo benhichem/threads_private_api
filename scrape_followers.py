@@ -33,14 +33,12 @@ def get_user_id(input_value):
 
 @retry_on_exception(max_tries=3)
 def get_followers(user_id, max_id=None):
-    followers = threads_api.get_user_followers(user_id, max_id)
-    print(followers)
-    return followers
+    return threads_api.get_user_followers(user_id, max_id)
+
 
 def scrape_followers(input_value):
     user_id = get_user_id(input_value)
     print(user_id)
-   
 
     if not user_id:
         logging.error(f"Failed to get user_id for {input_value}")
