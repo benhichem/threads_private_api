@@ -1,100 +1,149 @@
+import requests 
 import os
 import sys
+import json
 import pandas as pd
 import logging
 from dotenv import load_dotenv
-from rocketapi import InstagramAPI, ThreadsAPI
+
 from decorators import retry_on_exception
-import time
+
 
 logging.basicConfig(level=logging.INFO)
-
 load_dotenv()
 
-token = os.getenv('ROCKETAPI_TOKEN')
+token = os.getenv('RAPIDAPIKEY')
 
-ig_api = InstagramAPI(token)
-threads_api = ThreadsAPI(token)
+@retry_on_exception(max_tries=3)
+def get_user_id(user:str):
+    url = "https://threads-api4.p.rapidapi.com/api/user/info"
+    querystring = {"username":user}
+    headers = {
+        "x-rapidapi-Key": token,
+        "x-rapidapi-Host": "threads-api4.p.rapidapi.com"
+    }
+    response = requests.get(url, headers=headers, params=querystring)
+    print(response.text) 
+    if(response.status_code ==200):
+        try:
+            data = response.json()
+            user_id = data["data"]["user"]["id"]
+            followers_count = data['data']["user"]["follower_count"]
+            return {"user_id": user_id, "followers_count":followers_count} 
+        except json.JSONDecodeError:
+            print("Response was not valid JSON. Raw content:")
+            print(response.text)
+            raise Exception('Failed to fetch user id')
+    else:
+        print("Error: ", response.status_code)
+        print(response.json())
+        raise Exception('Failed to fetch user id')
 
 
 @retry_on_exception(max_tries=3)
-def get_user_info(username):
-    return ig_api.get_user_info(username)
+def get_followers(user_id, end_cursor=None):
+    """
+    Fetch followers for a Threads user
+    
+    Args:
+        user_id (str): The user ID to get followers for
+        end_cursor (str, optional): The pagination cursor. Defaults to None.
+    
+    
+    """
+    url = "https://threads-api4.p.rapidapi.com/api/user/followers"
+    
+    # Start with required parameters
+    querystring = {"user_id": user_id}
+    
+    # Add end_cursor parameter only if provided
+    if end_cursor:
+        querystring["end_cursor"] = end_cursor
+    
+    headers = {
+        'x-rapidapi-key': token,
+        'x-rapidapi-host': "threads-api4.p.rapidapi.com"
+    }
+    
+    response = requests.get(url, headers=headers, params=querystring)
+    print(response.text)
 
+    # Check if request was successful
+    if response.status_code == 200:
+        try:
+            # Parse JSON response
+            data = response.json()
+            followers = data["data"]["user"]['followers']['edges']
+            has_next_page = data['data']["user"]['followers']['page_info']['has_next_page']            
+            end_cursor_res = data['data']['user']['followers']['page_info']['end_cursor']
+            return {"followers":followers, "has_next_page":has_next_page, "end_cursor":end_cursor_res}
 
-def get_user_id(input_value):
-    try:
-        int(input_value)
-        return input_value
-    except ValueError:
-        res = get_user_info(input_value)
-        return res['data']['user']['id']
-
-
-@retry_on_exception(max_tries=3)
-def get_followers(user_id, max_id=None):
-    return threads_api.get_user_followers(user_id, max_id)
-
+        except json.JSONDecodeError as e:
+            print(f"Error parsing JSON: {e}")
+            print(f"Raw response: {response.text}")
+            raise Exception("Failed to parse JSON response")
+    else:
+        print(f"Request failed with status code {response.status_code}")
+        print(response.text)
+        raise Exception("Failed to fetch followers")
 
 def scrape_followers(input_value):
-    user_id = get_user_id(input_value)
-    print(user_id)
-
-    if not user_id:
-        logging.error(f"Failed to get user_id for {input_value}")
+    user = get_user_id(input_value)
+    print(user)
+    if not user:
+        print(f"Failed to get user_id for {input_value}")
         return
-
-    logging.info(f"Scraping followers for user_id: {user_id}")
+    user_id = user["user_id"]
+    
+    print(f"Scraping followers for user_id: {user_id}")
     next_max_id = None
     followers_data = []
     followers_count = None
-    first_100 = False  # avoiding traps
-
     fn = f"var/followers/{user_id}.csv"
+    
     while True:
         res = get_followers(user_id, next_max_id)
-        if not res or not res.get('next_max_id'):
+        if not res:
+            print("Failed to fetch followers.")
             break
-
-        if res.get('next_max_id') == "100":
-            if first_100:
-                logging.info("Instagram returns wrong max id, try again")
-                continue
-            first_100 = True
-
+        
         if not followers_count:
-            followers_count = res['user_count']
+            print("Fetching followers count...")
+            followers_count = user["followers_count"]  # Fixed: user instead of user_id
             logging.info(f"Total followers: {followers_count}")
-
-        followers = res['users']
-        next_max_id = res['next_max_id']
+        
+        followers = res['followers']
+        next_max_id = res['end_cursor']
         logging.info(f"Got {len(followers)} followers, next_max_id: {next_max_id}")
-
+        
         for follower in followers:
             data = {
-                "pk": follower['pk'],
-                "username": follower['username'],
-                "full_name": follower['full_name'],
-                "is_private": follower['is_private'],
-                "is_verified": follower['is_verified'],
+                "id": follower['node']['id'],
+                "pk": follower['node']['pk'],  # Fixed: follower instead of followers
+                "username": follower['node']['username'],
+                "full_name": follower['node']['full_name'],
+                "is_verified": follower['node']['is_verified'],
+                "follower_count":follower['node']["follower_count"]
             }
             followers_data.append(data)
-
+        
         df = pd.DataFrame(followers_data)
         df.to_csv(fn, index=False)
-
-    logging.info(f"Done scraping followers for user_id: {user_id}")
-    logging.info(f"Total followers: {followers_count}")
-    logging.info(f"Saved to: {fn}")
-
+        print(df)
+        
+        # Only break after processing the current batch
+        if not res.get('has_next_page'):
+            print("No more followers to fetch.")
+            break
+      
+    return followers_data
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: python scrape_followers.py <username or user_id>")
+    if(len(sys.argv) <2):
+        print('Usage: python scrape_followers_rapidapi.py <username>')
         return
     input_value = sys.argv[1]
     scrape_followers(input_value)
-
 
 if __name__ == "__main__":
     main()
