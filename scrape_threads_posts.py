@@ -3,7 +3,7 @@ from selenium.webdriver.common.by import By
 from time import sleep
 import pandas as pd
 import random
-
+import sys
 posts_data = []
 def scroll_and_collect_posts(driver, max_scrolls = 50):
     scroll_count = 0
@@ -73,23 +73,27 @@ def scroll_and_collect_posts(driver, max_scrolls = 50):
 
     return posts_data 
 
-def scrapeProfilePosts(username):
-    driver = uc.Chrome(headless=False, use_subprocess=False, version_main=135, user_data_dir="profile1")
+def scrapeProfilePosts(username, scrolls):
+    driver = uc.Chrome(headless=False,user_data_dir="profile1", use_subprocess=False, version_main=135)
     # sleep(50000)
     driver.get(f'https://www.threads.net/@{username}')
     fn = f"var/posts/{username}.csv"
-    psts = scroll_and_collect_posts(driver, 50)
+    psts = scroll_and_collect_posts(driver, scrolls)
     print(psts)
     df = pd.DataFrame(psts)
     df.to_csv(fn, index=True)
-
-        
-         
-
     print(posts_data)
 
 def main():
-    scrapeProfilePosts("puppiwii")
-    return
+     scrolls = 100
+     if(len(sys.argv) <2):
+        print('Usage: python scrape_threads_posts.py <username>')
+        return
+
+     input_value = sys.argv[1]
+    
+     scrapeProfilePosts(input_value, scrolls)
+     return
+
 if __name__ == "__main__":
     main()
